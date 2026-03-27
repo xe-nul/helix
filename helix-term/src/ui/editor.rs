@@ -1469,6 +1469,7 @@ impl Component for EditorView {
                 EventResult::Consumed(None)
             }
             Event::Key(mut key) => {
+                log::warn!("Key: {:?}", key);
                 cx.editor.reset_idle_timer();
                 canonicalize_key(&mut key);
 

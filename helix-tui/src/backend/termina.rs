@@ -120,7 +120,7 @@ impl TerminaBackend {
         // If we only receive the device attributes then we know it is not.
         write!(
             terminal,
-            "{}{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}",
             // Synchronized output
             Csi::Mode(csi::Mode::QueryDecPrivateMode(csi::DecPrivateMode::Code(
                 csi::DecPrivateModeCode::SynchronizedOutput
@@ -133,10 +133,6 @@ impl TerminaBackend {
             Csi::Sgr(csi::Sgr::UnderlineColor(TEST_COLOR.into())),
             Dcs::Request(dcs::DcsRequest::GraphicRendition),
             Csi::Sgr(csi::Sgr::Reset),
-            Osc::ChangeDynamicColors(
-                osc::DynamicColorNumber::TextBackgroundColor,
-                vec![osc::ColorOrQuery::Query]
-            ),
             // Finally request the primary device attributes
             Csi::Device(csi::Device::RequestPrimaryDeviceAttributes),
         )?;

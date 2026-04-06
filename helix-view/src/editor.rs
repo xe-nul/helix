@@ -15,7 +15,7 @@ use crate::{
     Document, DocumentId, View, ViewId,
 };
 use helix_event::dispatch;
-use helix_loader::workspace_trust::TrustStatus;
+use helix_loader::workspace_trust::{TrustStatus, WorkspaceTrust};
 use helix_vcs::DiffProviderRegistry;
 
 use futures_util::stream::select_all::SelectAll;
@@ -1259,6 +1259,7 @@ pub struct Editor {
 
     pub mouse_down_range: Option<Range>,
     pub cursor_cache: CursorCache,
+    pub workspace_trust: WorkspaceTrust,
 }
 
 pub type Motion = Box<dyn Fn(&mut Editor)>;
@@ -1336,6 +1337,11 @@ impl Editor {
         let language_servers = helix_lsp::Registry::new(syn_loader.clone());
         let conf = config.load();
         let auto_pairs = (&conf.auto_pairs).into();
+        let workspace_trust = if conf.insecure {
+            WorkspaceTrust::load()
+        } else {
+            WorkspaceTrust::load_empty()
+        };
 
         // HAXX: offset the render area height by 1 to account for prompt/commandline
         area.height -= 1;
@@ -1382,6 +1388,7 @@ impl Editor {
             mouse_down_range: None,
             cursor_cache: CursorCache::default(),
             dir_stack: VecDeque::with_capacity(DIR_STACK_CAP),
+            workspace_trust,
         }
     }
 
@@ -1652,8 +1659,9 @@ impl Editor {
         let config = doc.config.load();
         let root_dirs = &config.workspace_lsp_roots;
 
-        if let TrustStatus::Untrusted =
-            helix_loader::workspace_trust::quick_query_workspace(self.config.load().insecure)
+        if let TrustStatus::Untrusted = self
+            .workspace_trust
+            .query_workspace(self.config.load().insecure)
         {
             self.set_status(
                 "Current workspace is not trusted. Run `:workspace-trust` to enable all features.",

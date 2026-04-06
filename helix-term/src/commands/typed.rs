@@ -4431,7 +4431,7 @@ fn trust_workspace(
         return Ok(());
     }
 
-    helix_loader::workspace_trust::WorkspaceTrust::load(false).trust_workspace();
+    cx.editor.workspace_trust.trust_workspace();
 
     cx.editor.config_events.0.send(ConfigEvent::Refresh)?;
     // HACK
@@ -4439,7 +4439,7 @@ fn trust_workspace(
 }
 
 fn untrust_workspace(
-    _cx: &mut compositor::Context,
+    cx: &mut compositor::Context,
     _args: Args<'_>,
     event: PromptEvent,
 ) -> anyhow::Result<()> {
@@ -4447,6 +4447,6 @@ fn untrust_workspace(
         return Ok(());
     }
 
-    helix_loader::workspace_trust::WorkspaceTrust::load(false).untrust_workspace();
+    cx.editor.workspace_trust.untrust_workspace();
     Ok(())
 }

@@ -445,6 +445,9 @@ impl Application {
             }
 
             self.terminal.reconfigure((&default_config.editor).into())?;
+            if !default_config.editor.insecure {
+                self.editor.workspace_trust = helix_loader::workspace_trust::WorkspaceTrust::load();
+            }
             // Store new config
             self.config.store(Arc::new(default_config));
             Ok(())

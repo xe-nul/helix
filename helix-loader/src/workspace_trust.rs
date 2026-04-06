@@ -1,11 +1,8 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use crate::{data_dir, workspace_exclude_file, workspace_trust_file};
 
-pub struct WorkspaceTrust {
-    trusted: HashSet<PathBuf>,
-    excluded: Option<HashSet<PathBuf>>,
-}
+pub struct WorkspaceTrust(HashMap<PathBuf, TrustUntrustStatus>);
 
 #[derive(Clone, Copy)]
 pub enum TrustStatus {
@@ -15,57 +12,69 @@ pub enum TrustStatus {
 
 impl WorkspaceTrust {
     /// Loads `WorkspaceTrust`.
-    ///
-    /// Should be used only when there is a need to change trust status
-    /// of a particular workspace.
-    ///
-    /// For querying trust status of a workspace use `quick_query_workspace()` or
-    /// `quick_query_workspace_with_explicit_untrust()`
-    pub fn load(with_exclusion: bool) -> Self {
-        let mut trusted = HashSet::new();
+    pub fn load() -> Self {
+        let mut workspaces = HashMap::new();
 
-        match fs::read_to_string(workspace_trust_file()) {
-            Ok(workspace_trust_file) => {
-                for line in workspace_trust_file.split('\n') {
+        match fs::read_to_string(workspace_exclude_file()) {
+            Ok(exclude_file) => {
+                for line in exclude_file.split('\n') {
                     if !line.is_empty() {
                         let path = PathBuf::from(line);
-                        trusted.insert(path);
+                        workspaces.insert(path, TrustUntrustStatus::DenyAlways);
                     }
                 }
             }
             Err(e) => log::error!("workspace file couldn't be read: {:?}", e),
         };
 
-        let excluded = if with_exclusion {
-            let mut untrusted = HashSet::new();
-
-            match fs::read_to_string(workspace_exclude_file()) {
-                Ok(workspace_untrust_file) => {
-                    for line in workspace_untrust_file.split('\n') {
-                        if !line.is_empty() {
-                            let path = PathBuf::from(line);
-                            untrusted.insert(path);
-                        }
+        match fs::read_to_string(workspace_trust_file()) {
+            Ok(trust_file) => {
+                for line in trust_file.split('\n') {
+                    if !line.is_empty() {
+                        let path = PathBuf::from(line);
+                        workspaces.insert(path, TrustUntrustStatus::AllowAlways);
                     }
                 }
-                Err(e) => log::error!("workspace file couldn't be read: {:?}", e),
-            };
-
-            Some(untrusted)
-        } else {
-            None
+            }
+            Err(e) => log::error!("workspace file couldn't be read: {:?}", e),
         };
-        WorkspaceTrust { trusted, excluded }
+
+        WorkspaceTrust(workspaces)
+    }
+
+    pub fn load_empty() -> Self {
+        WorkspaceTrust(HashMap::new())
+    }
+
+    pub fn query_workspace(&self, insecure: bool) -> TrustStatus {
+        match self.query_workspace_with_explicit_untrust(insecure) {
+            Some(TrustUntrustStatus::AllowAlways) => TrustStatus::Trusted,
+            _ => TrustStatus::Untrusted,
+        }
+    }
+
+    pub fn query_workspace_with_explicit_untrust(
+        &self,
+        insecure: bool,
+    ) -> Option<TrustUntrustStatus> {
+        if insecure {
+            return Some(TrustUntrustStatus::AllowAlways);
+        }
+
+        let workspace = crate::find_workspace().0;
+
+        self.0.get(&workspace).copied()
     }
 
     fn write_trust_to_file(&self) {
         let mut trust_text = String::new();
-        for workspace in self.trusted.iter() {
-            if let Some(path_str) = workspace.to_str() {
-                trust_text += &format!("{path_str}\n");
+        for (workspace, trust) in self.0.iter() {
+            if let TrustUntrustStatus::AllowAlways = trust {
+                if let Some(path_str) = workspace.to_str() {
+                    trust_text += &format!("{path_str}\n");
+                }
             }
         }
-        // let chains aren't supported in current MSRV
         if let Ok(false) = fs::exists(data_dir()) {
             if let Err(e) = fs::create_dir_all(data_dir()) {
                 log::error!("Couldn't create helix's data directory: {:?}", e);
@@ -77,53 +86,43 @@ impl WorkspaceTrust {
     }
 
     fn write_exclusion_to_file(&self) {
-        if let Some(untrusted) = &self.excluded {
-            let mut trust_text = String::new();
-            for workspace in untrusted.iter() {
+        let mut exclude_text = String::new();
+        for (workspace, trust) in self.0.iter() {
+            if let TrustUntrustStatus::DenyAlways = trust {
                 if let Some(path_str) = workspace.to_str() {
-                    trust_text += &format!("{path_str}\n");
+                    exclude_text += &format!("{path_str}\n");
                 }
             }
-            // let chains aren't supported in current MSRV
-            if let Ok(false) = fs::exists(data_dir()) {
-                if let Err(e) = fs::create_dir_all(data_dir()) {
-                    log::error!("Couldn't create helix's data directory: {:?}", e);
-                };
-            }
-            if let Err(e) = fs::write(workspace_exclude_file(), trust_text) {
-                log::error!("Error during write of workspace_trust file: {:?}", e);
-            }
-        } else {
-            log::error!("Called write_untrust_to_file() when self.untrusted is None");
+        }
+        if let Ok(false) = fs::exists(data_dir()) {
+            if let Err(e) = fs::create_dir_all(data_dir()) {
+                log::error!("Couldn't create helix's data directory: {:?}", e);
+            };
+        }
+        if let Err(e) = fs::write(workspace_exclude_file(), exclude_text) {
+            log::error!("Error during write of workspace_trust file: {:?}", e);
         }
     }
 
     /// Mark current workspace trusted
     pub fn trust_workspace(&mut self) {
         let workspace = crate::find_workspace().0;
-        self.trusted.insert(workspace);
+        self.0.insert(workspace, TrustUntrustStatus::AllowAlways);
         self.write_trust_to_file();
     }
 
     /// Remove trusted mark from current workspace
     pub fn untrust_workspace(&mut self) {
         let workspace = crate::find_workspace().0;
-        self.trusted.remove(&workspace);
+        self.0.insert(workspace, TrustUntrustStatus::DenyOnce);
         self.write_trust_to_file();
     }
 
     /// Mark current workspace excluded.
-    ///
-    /// Should be called only if `WorkspaceTrust` was created with `WorkspaceTrust::load(true)`
     pub fn exclude_workspace(&mut self) {
         let workspace = crate::find_workspace().0;
-        self.trusted.remove(&workspace);
-        if let Some(excluded) = &mut self.excluded {
-            excluded.insert(workspace);
-            self.write_exclusion_to_file();
-        } else {
-            log::error!("Called untrust_workspace_permanent() when self.untrusted is None");
-        }
+        self.0.insert(workspace, TrustUntrustStatus::DenyAlways);
+        self.write_exclusion_to_file();
     }
 }
 
@@ -135,6 +134,7 @@ pub enum TrustUntrustStatus {
     AllowAlways,
 }
 
+/// Should be used only when there is no `Editor` available.
 pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
     if insecure {
         return TrustStatus::Trusted;
@@ -153,36 +153,4 @@ pub fn quick_query_workspace(insecure: bool) -> TrustStatus {
         Err(err) => log::error!("workspace file couldn't be read: {err:?}"),
     };
     TrustStatus::Untrusted
-}
-
-pub fn quick_query_workspace_with_explicit_untrust(insecure: bool) -> TrustUntrustStatus {
-    if insecure {
-        return TrustUntrustStatus::AllowAlways;
-    }
-
-    let workspace = crate::find_workspace().0;
-    match fs::read_to_string(workspace_trust_file()) {
-        Ok(workspace_trust_file) => {
-            for line in workspace_trust_file.split('\n') {
-                if PathBuf::from(line) == workspace {
-                    return TrustUntrustStatus::AllowAlways;
-                }
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (),
-        Err(err) => log::error!("workspace_trust file couldn't be read: {err:?}"),
-    };
-
-    match fs::read_to_string(workspace_exclude_file()) {
-        Ok(workspace_untrust_file) => {
-            for line in workspace_untrust_file.split('\n') {
-                if PathBuf::from(line) == workspace {
-                    return TrustUntrustStatus::DenyAlways;
-                }
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (),
-        Err(err) => log::error!("workspace_untrust file couldn't be read: {err:?}"),
-    };
-    TrustUntrustStatus::DenyOnce
 }

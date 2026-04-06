@@ -1,20 +1,10 @@
-use std::{collections::HashSet, path::PathBuf};
-
 use helix_event::register_hook;
-use helix_loader::workspace_trust::{
-    quick_query_workspace_with_explicit_untrust, TrustUntrustStatus, WorkspaceTrust,
-};
+use helix_loader::workspace_trust::TrustUntrustStatus;
 use helix_view::{events::DocumentDidOpen, handlers::Handlers, DocumentId};
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 
 use crate::{compositor::Compositor, job, ui};
 
 const ID: &str = "workspace-trust-select";
-
-/// A set of canonicalized workspace paths which have been prompted for trust at runtime.
-static PROMPTED_WORKSPACES: Lazy<Mutex<HashSet<PathBuf>>> =
-    Lazy::new(|| Mutex::new(HashSet::new()));
 
 pub(super) fn register_hooks(_handlers: &Handlers) {
     register_hook!(move |event: &mut DocumentDidOpen<'_>| {
@@ -22,24 +12,19 @@ pub(super) fn register_hooks(_handlers: &Handlers) {
 
         // If there is no servers to be loaded, then the workspace might not be trusted yet
         if doc.language_servers().next().is_none() {
-            if let TrustUntrustStatus::DenyOnce =
-                quick_query_workspace_with_explicit_untrust(event.editor.config().insecure)
+            if let None = event
+                .editor
+                .workspace_trust
+                .query_workspace_with_explicit_untrust(event.editor.config().insecure)
             {
-                let (workspace, _) = helix_loader::find_workspace();
-                job::dispatch_blocking(|_editor, compositor| prompt(workspace, compositor));
+                job::dispatch_blocking(|_editor, compositor| prompt(compositor));
             }
         }
         Ok(())
     });
 }
 
-pub fn prompt(path: PathBuf, compositor: &mut Compositor) {
-    let mut workspaces = PROMPTED_WORKSPACES.lock();
-    if workspaces.contains(&path) {
-        return;
-    } else {
-        workspaces.insert(path.clone());
-    }
+pub fn prompt(compositor: &mut Compositor) {
     let select = select();
     compositor.replace_or_push(ID, select);
 }
@@ -59,16 +44,15 @@ fn select() -> ui::Select<TrustUntrustStatus> {
         (),
         move |editor, option, event| {
             if event == ui::PromptEvent::Validate {
-                let mut trust = WorkspaceTrust::load(true);
                 match option {
                     TrustUntrustStatus::DenyAlways => {
-                        trust.exclude_workspace();
+                        editor.workspace_trust.exclude_workspace();
                     }
                     TrustUntrustStatus::DenyOnce => {
-                        // Do nothing
+                        editor.workspace_trust.untrust_workspace();
                     }
                     TrustUntrustStatus::AllowAlways => {
-                        trust.trust_workspace();
+                        editor.workspace_trust.trust_workspace();
 
                         let documents: Vec<DocumentId> = editor.documents.keys().cloned().collect();
                         for document_id in documents.iter() {

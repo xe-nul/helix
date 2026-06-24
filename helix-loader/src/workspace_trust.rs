@@ -325,6 +325,17 @@ impl WorkspaceTrust {
         );
     }
 
+    pub fn trust_once(&self, workspace: &Path) {
+        let has_local_config = has_local_config(workspace);
+        self.inner.lock().insert(
+            workspace.to_path_buf(),
+            CacheEntry {
+                status: TrustStatus::Trusted,
+                has_local_config,
+            },
+        );
+    }
+
     /// Revoke any persisted trust grant or exclusion for `workspace`.
     pub fn untrust(&self, workspace: &Path) {
         remove_entry(workspace);

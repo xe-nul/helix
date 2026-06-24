@@ -4094,6 +4094,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
     },
     TypableCommand {
+        name: "workspace-trust-once",
+        aliases: &[],
+        doc: "Allow language servers and local config for the current workspace until restart.",
+        fun: trust_workspace_once,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, None), ..Signature::DEFAULT },
+    },
+    TypableCommand {
         name: "workspace-untrust",
         aliases: &[],
         doc: "Revoke the current workspace's trust grant or exclusion.",
@@ -4568,6 +4576,23 @@ fn trust_workspace(
 
     let workspace = current_workspace(cx);
     cx.editor.workspace_trust.trust(&workspace);
+
+    cx.editor.config_events.0.send(ConfigEvent::Refresh)?;
+    // Restart any LSPs that didn't start because trust was missing.
+    lsp_restart(cx, args, event)
+}
+
+fn trust_workspace_once(
+    cx: &mut compositor::Context,
+    args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let workspace = current_workspace(cx);
+    cx.editor.workspace_trust.trust_once(&workspace);
 
     cx.editor.config_events.0.send(ConfigEvent::Refresh)?;
     // Restart any LSPs that didn't start because trust was missing.

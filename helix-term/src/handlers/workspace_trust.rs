@@ -81,28 +81,33 @@ pub enum TrustChoice {
     #[default]
     Trust,
     Never,
+    Once,
 }
 
 fn select(workspace: PathBuf) -> ui::Select<TrustChoice> {
     ui::Select::new(
         TRUST_MESSAGE,
-        [TrustChoice::Trust, TrustChoice::Never],
+        [TrustChoice::Trust, TrustChoice::Never, TrustChoice::Once],
         (),
         move |editor, option, event| {
+            let refresh_config = |editor: &mut helix_view::Editor| {
+                let documents: Vec<DocumentId> = editor.documents.keys().cloned().collect();
+                for document_id in documents.iter() {
+                    editor.launch_language_servers(*document_id);
+                }
+                let _ = editor
+                    .config_events
+                    .0
+                    .send(helix_view::editor::ConfigEvent::Refresh);
+            };
+
             if event != ui::PromptEvent::Validate {
                 return;
             }
             match option {
                 TrustChoice::Trust => {
                     editor.workspace_trust.trust(&workspace);
-                    let documents: Vec<DocumentId> = editor.documents.keys().cloned().collect();
-                    for document_id in documents.iter() {
-                        editor.launch_language_servers(*document_id);
-                    }
-                    let _ = editor
-                        .config_events
-                        .0
-                        .send(helix_view::editor::ConfigEvent::Refresh);
+                    refresh_config(editor)
                 }
                 TrustChoice::Never => {
                     editor.workspace_trust.exclude(&workspace);
@@ -112,6 +117,10 @@ fn select(workspace: PathBuf) -> ui::Select<TrustChoice> {
                         .config_events
                         .0
                         .send(helix_view::editor::ConfigEvent::Refresh);
+                }
+                TrustChoice::Once => {
+                    editor.workspace_trust.trust_once(&workspace);
+                    refresh_config(editor);
                 }
             }
         },
@@ -125,6 +134,7 @@ impl crate::ui::menu::Item for TrustChoice {
         match self {
             TrustChoice::Trust => "Trust",
             TrustChoice::Never => "Never",
+            TrustChoice::Once => "Trust once",
         }
         .into()
     }

@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use helix_core::config::user_lang_config;
 use helix_event::register_hook;
 use helix_loader::workspace_trust::TrustStatus;
 use helix_view::{events::DocumentDidOpen, handlers::Handlers, DocumentId};
@@ -22,9 +23,33 @@ pub(super) fn register_hooks(_handlers: &Handlers) {
     register_hook!(move |event: &mut DocumentDidOpen<'_>| {
         let doc_id = event.doc;
 
-        let (workspace, servers_to_load) = {
+        let workspace = {
             let doc = doc!(event.editor, &doc_id);
-            (doc.workspace_root().to_path_buf(), doc.servers_to_load())
+            doc.workspace_root().to_path_buf()
+        };
+
+        let lang = if let Some(doc) = event.editor.document(doc_id) {
+            doc.language_config()
+        } else {
+            None
+        };
+
+        let servers_to_load = if let Some(lang) = lang {
+            if lang.language_servers.is_empty() {
+                false
+            } else if let Ok(config) = user_lang_config(&event.editor.workspace_trust) {
+                lang.language_servers.iter().any(|a| {
+                    if let Some(val) = config.language_server.get(&a.name) {
+                        helix_stdx::env::which(val.command.as_str()).is_ok()
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        } else {
+            false
         };
 
         // Stale: `.helix/` was edited since the user last ran `trust`. LSPs keep
